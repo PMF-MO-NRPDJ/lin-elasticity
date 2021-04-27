@@ -1,5 +1,4 @@
-#ifndef  OPERATOR_HH_IS_INCLUDED
-#define  OPERATOR_HH_IS_INCLUDED
+#pragma once
 
 //#include<dune/geometry/quadraturerules.hh>
 #include <dune/pdelab/common/quadraturerules.hh>
@@ -9,7 +8,7 @@
 #include <dune/pdelab/localoperator/pattern.hh>
 #include <dune/pdelab/finiteelement/localbasiscache.hh>
 
-/** Lokalni operator za zadaću :
+/** Lokalni operator za zadaću linearne elastičnosti
  *
  *
  * \tparam BCType tip rubnog uvjeta
@@ -26,57 +25,50 @@ class ElasticityLocalOperator : // derivacijska lista -- jakobijan i pattern ra�
   public Dune::PDELab::LocalOperatorDefaultFlags
 {
 public:
-  // Zastavice koje signaliziraju da na svakom elementu treba zvati: 
-  enum { doPatternVolume = true };  // metodu za računanje patterna (iz volumnih doprinosa)
-  enum { doAlphaVolume = true };    // alpha_volume
-  enum { doAlphaBoundary = true };  // alpha_boundary         
+  // Zastavice koje signaliziraju da na svakom elementu treba zvati:
+  enum { doPatternVolume = true };
+  enum { doAlphaVolume = true };
+  enum { doAlphaBoundary = true };
 
   ElasticityLocalOperator(const BCType& bctype_, // boundary cond.type
                           double mu_, double lambda_, double g_vert_, double rho_,
-                          unsigned int intorder_=2) :
+                          unsigned int intorder_=4) :
     bctype( bctype_ ), mu(mu_), lambda(lambda_), g_vert(g_vert_), rho(rho_), intorder( intorder_ )
   {}
 
   // volume integral depending on test and ansatz functions
-  // eg = element 
+  // eg = element
   // lfsu = lokalni prostor funkcija za rješenje
   // lfsv =  lokalni prostor funkcija za test funkciju
-  // x    = vektor koeficijenata rješenja 
+  // x    = vektor koeficijenata rješenja
   // r    = lokalni rezidual
   template<typename EG, typename LFSU, typename X, typename LFSV, typename R>
   void alpha_volume(const EG& eg, const LFSU& lfsu, const X& x, const LFSV& lfsv, R& r) const
   {
-    // dimensions
-    const int dim = EG::Geometry::mydimension;
-    const int dimw = EG::Geometry::coorddimension;
+    const int dim = EG::Geometry::coorddimension;
 
-    // Koristimo činjenicu da je LFSU = LFSV
-    // Tipovi skalarnih prostora dobivaju se na ovaj način.
-//    using LFSU0 = typename LFSU::template Child<0>::Type;
-//    using LFSU1 = typename LFSU::template Child<1>::Type;
-
-    // uobičajene tipove uzimamo od skalarnog prostora - više nisu potrebni jer koristimo auto
-    //using DF = typename LFSU0::Traits::FiniteElementType::Traits::LocalBasisType::Traits::DomainFieldType;
-    //using RF = typename LFSU0::Traits::FiniteElementType::Traits::LocalBasisType::Traits::RangeFieldType;
-    //using Jacobian = typename LFSU0::Traits::FiniteElementType::Traits::LocalBasisType::Traits::JacobianType;
-    //using Range = typename LFSU0::Traits::FiniteElementType::Traits::LocalBasisType::Traits::RangeType;
-    using Gradient =  Dune::FieldVector<double,dimw>;
+    using Gradient =  Dune::FieldVector<double,dim>;
     using size_type = typename LFSU::Traits::SizeType;
 
     // Kvadraturna formula na elementu.
     const auto & rule = Dune::PDELab::quadratureRule(eg.geometry(), intorder);
 
-       // skalarni prostori
-    auto const & lfsu0 = lfsu.template child<0>();
-    auto const & lfsu1 = lfsu.template child<1>();
+    // skalarni prostori
+    using namespace Dune::Indices;
+    auto const lfsu0 = lfsu.child(_0);
+    auto const lfsu1 = lfsu.child(_1);
+    auto const lfsu2 = lfsu.child(_2);
 
        for(auto const & qp : rule){
            // Uzimamo samo skalarne bazne funkcije jer su bazne funkcije za svaku komponentu iste.
            auto& phi0 = cache.evaluateFunction(qp.position(), lfsu0.finiteElement().localBasis());
            // Izračunajmo sve komponenete pomaka u integracijskoj točki.
-           double u_0=0.0, u_1=0.0;
+           double u_0=0.0;
+           double u_1=0.0;
+           double u_2=0.0;
            for (size_type i=0; i<lfsu0.size(); ++i) u_0 += x(lfsu0,i)*phi0[i];
            for (size_type i=0; i<lfsu1.size(); ++i) u_1 += x(lfsu1,i)*phi0[i];
+           for (size_type i=0; i<lfsu2.size(); ++i) u_2 += x(lfsu2,i)*phi0[i];
 
            // Gradijenti skalarnih baznih funkcija na ref elementu.
            auto const & js0 = cache.evaluateJacobian(qp.position(), lfsu0.finiteElement().localBasis());
@@ -87,40 +79,56 @@ public:
                jac.mv(js0[i][0],gradphi0[i]);  // gradphi0[i] = jac * js0[i][0]
 
            // Gradijent komponenti rješenja (pomaka).
-           Gradient gradu_0(0.0),  gradu_1(0.0);
+           Gradient gradu_0(0.0);
+           Gradient gradu_1(0.0);
+           Gradient gradu_2(0.0);
            for (size_type i=0; i<lfsu0.size(); ++i)
                gradu_0.axpy(x(lfsu0,i), gradphi0[i]); // gradu_0 += x(lfsu0,i)*gradphi0[i]
            for (size_type i=0; i<lfsu1.size(); ++i)
                gradu_1.axpy(x(lfsu1,i), gradphi0[i]); // gradu_1 += x(lfsu1,i)*gradphi0[i]
+           for (size_type i=0; i<lfsu2.size(); ++i)
+               gradu_2.axpy(x(lfsu2,i), gradphi0[i]); // gradu_2 += x(lfsu2,i)*gradphi0[i]
 
-           // evaluate parameters;
-           // Dune::FieldVector<RF,dim>
-           //   globalpos = eg.geometry().global(qp.position());
-           // eg je ElementGeometry, zato moramo zvati entity metodu.
-           Gradient f; 
+           Gradient f;
            f[0] = 0.0;
-           f[1] = -9.81 * rho; // kgm/s^2
+           f[1] = 0.0;
+           f[2] = -9.81 * rho; // kgm/s^2
 
 
-           double divu = gradu_0[0]+gradu_1[1];
-           double D12u =  0.5*(gradu_1[0] + gradu_0[1]); // e(u)_{1,2}
-           // integrate grad u * grad phi_i + a*u*phi_i - f phi_i
+           double divu = gradu_0[0] + gradu_1[1] + gradu_2[2];
+
+           double eu[3][3];
+           eu[0][0] = 0.5*( gradu_0[0] + gradu_0[0] );
+           eu[0][1] = 0.5*( gradu_0[1] + gradu_1[0] );
+           eu[0][2] = 0.5*( gradu_0[2] + gradu_2[0] );
+           eu[1][0] = 0.5*( gradu_1[0] + gradu_0[1] );
+           eu[1][1] = 0.5*( gradu_1[1] + gradu_1[1] );
+           eu[1][2] = 0.5*( gradu_1[2] + gradu_2[1] );
+           eu[2][0] = 0.5*( gradu_2[0] + gradu_0[2] );
+           eu[2][1] = 0.5*( gradu_2[1] + gradu_1[2] );
+           eu[2][2] = 0.5*( gradu_2[2] + gradu_2[2] );
+
            double factor = qp.weight()*eg.geometry().integrationElement(qp.position());
 
            for (size_type i=0; i<lfsu0.size(); ++i)
-             r.accumulate(lfsu0, i, (  2*mu * ( gradu_0[0]*gradphi0[i][0] + D12u * gradphi0[i][1] )
+             r.accumulate(lfsu0, i, (  2*mu * ( eu[0][0]*gradphi0[i][0] + eu[0][1]*gradphi0[i][1] + eu[0][2]*gradphi0[i][2] )
                                       + lambda *( divu * gradphi0[i][0] )
                                       - f[0]*phi0[i]
                                     ) * factor);
 
            for (size_type i=0; i<lfsu1.size(); ++i)
-             r.accumulate(lfsu1, i, (  2*mu * (  D12u * gradphi0[i][0] + gradu_1[1]*gradphi0[i][1] )
+             r.accumulate(lfsu1, i, (  2*mu * ( eu[1][0]*gradphi0[i][0] + eu[1][1]*gradphi0[i][1] + eu[1][2]*gradphi0[i][2] )
                                       + lambda * ( divu * gradphi0[i][1] )
                                       - f[1]*phi0[i]
                                     ) * factor);
+
+           for (size_type i=0; i<lfsu2.size(); ++i)
+             r.accumulate(lfsu2, i, (  2*mu * ( eu[2][0]*gradphi0[i][0] + eu[2][1]*gradphi0[i][1] + eu[2][2]*gradphi0[i][2] )
+                                      + lambda * ( divu * gradphi0[i][2] )
+                                      - f[2]*phi0[i]
+                                    ) * factor);
+
          }
-
-
   }
 
   // boundary integral
@@ -134,31 +142,25 @@ public:
                        const LFSV& lfsv_s, R& r_s) const
   {
     const int dim = IG::coorddimension;
-    // Tipovi skalarnih prostora 
-//    using LFSU0 = typename LFSU:: template Child<0>::Type;
-//    using LFSU1 = typename LFSU:: template Child<1>::Type;
     // skalarni prostori
     auto const & lfsu0 = lfsu_s.template child<0>();
     auto const & lfsu1 = lfsu_s.template child<1>();
-
-    using size_type =  typename LFSU::Traits::SizeType;
-
+    auto const & lfsu2 = lfsu_s.template child<2>();
 
     // kvadraturna formula na stranici
     auto const & rule = Dune::PDELab::quadratureRule(ig.geometry(), intorder);
 
-    // loop over quadrature points and integrate normal flux
     for (auto const & qp : rule)
       {
-        // skip rest if we are on Dirichlet boundary
         if ( bctype.isDirichlet( ig, qp.position() ) )
           continue;
-        // Global position
+
         auto globalpos = ig.geometry().global(qp.position());
+
         // Opterećenje imamo samo na gornjoj granici y=2.
-        if(globalpos[dim-1] < 2.0 - 1E-5)
+        if(globalpos[2] < 2.0 - 1E-8)
               continue;
-        // position of quadrature point in local coordinates of element
+
         auto local = ig.geometryInInside().global(qp.position());
 
         // Imamo onoliko vektora baznih funkcija koliko ima komponenata, ali sve su "iste"
@@ -168,13 +170,17 @@ public:
 
         Dune::FieldVector<double,dim> flux;
         flux[0] = 0.0;
-        flux[1] = -g_vert;
-
-        for (size_type i=0; i<lfsu0.size(); ++i)
+        flux[1] = 0.0;
+        flux[2] = -g_vert;
+/*
+        for (size_t i=0; i<lfsu0.size(); ++i)
           r_s.accumulate(lfsu0,i, flux[0] * phi0[i] * factor);
 
-        for (size_type i=0; i<lfsu1.size(); ++i)
+        for (size_t i=0; i<lfsu1.size(); ++i)
           r_s.accumulate(lfsu1,i, flux[1] * phi0[i] * factor);
+*/
+        for (size_t i=0; i<lfsu2.size(); ++i)
+          r_s.accumulate(lfsu2,i, flux[2] * phi0[i] * factor);
       }
   }
 
@@ -184,7 +190,6 @@ private:
   double lambda;
   double g_vert;
   double rho;
-  bool   use_exact;
   unsigned int intorder;
   typedef typename FEM::Traits::FiniteElementType::Traits::LocalBasisType LocalBasis;
   Dune::PDELab::LocalBasisCache<LocalBasis> cache;
@@ -192,7 +197,3 @@ private:
 
 
 
-
-
-
-#endif  

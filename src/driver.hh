@@ -1,5 +1,4 @@
-#ifndef DRIVER_HH_IS_INCLUDED
-#define DRIVER_HH_IS_INCLUDED
+#pragma once
 
 #include <dune/pdelab/finiteelementmap/qkfem.hh>
 #include <dune/pdelab/constraints/conforming.hh>
@@ -25,56 +24,64 @@
 template <typename GV>
 void driver(GV & gv, double E, double nu, double g_vert, double rho, std::string  name)
 {
+  using namespace Dune::PDELab;
+
   const int dim = GV::Grid::dimension;
   const int k = 2; // stupanj prostora KE
+
   // skalarni prostor konačnih elemenata
-  using FEM0 = Dune::PDELab::QkLocalFiniteElementMap<GV, double, double, k>;
-  //using CON = Dune::PDELab::NoConstraints;
-  using CON = Dune::PDELab::ConformingDirichletConstraints;
-  using VEB0 = Dune::PDELab::ISTL::VectorBackend<>;
-  using GFS0 = Dune::PDELab::GridFunctionSpace<GV, FEM0, CON, VEB0>;
+  using FEM0 = QkLocalFiniteElementMap<GV, double, double, k>;
+  using CON  = ConformingDirichletConstraints;
+  using VEB0 = ISTL::VectorBackend<>;
+  using GFS0 = GridFunctionSpace<GV, FEM0, CON, VEB0>;
+
   // U vektorskom slučaju dajemo način grupiranja varijabli. Fixed znači da
   // grupiramo komponente koje pripadaju istoj nodalnoj točki.
-  using VEB = Dune::PDELab::ISTL::VectorBackend<Dune::PDELab::ISTL::Blocking::fixed>;
+  using VEB = ISTL::VectorBackend<Dune::PDELab::ISTL::Blocking::fixed>;
   // Vektorski grid function space. Blok varijabli odgovara entitetu! (kod nas vrhu elementa)
   // EntityBlockedOrderingTag = Indicate blocking of the unknowns by grid entity.
   // LexicographicOrderingTag = Indicate lexicographic ordering of the unknowns of non-leaf grid function spaces.
   // InterleavedOrderingTag = Indicate interleaved ordering of the unknowns of non-leaf grid function spaces ...
-  using GFS = Dune::PDELab::PowerGridFunctionSpace<GFS0, dim, VEB, Dune::PDELab::EntityBlockedOrderingTag>;
+  using GFS = PowerGridFunctionSpace<GFS0, dim, VEB, Dune::PDELab::EntityBlockedOrderingTag>;
+
   using CC = typename GFS::template ConstraintsContainer<double>::Type;
   // vektorski rubni uvjeti -- svaka varijabla zadovoljava Dirichletov uvjet na istom dijelu granice.
-  using U_BCTypeParam = Dune::PDELab::PowerConstraintsParameters<BCTypeParam<GV>, dim>;
+  using U_BCTypeParam = PowerConstraintsParameters<BCTypeParam<GV>, dim>;
+
   // lokalni operator
   using LOP = ElasticityLocalOperator<BCTypeParam<GV>, FEM0>;
-  using MBE = Dune::PDELab::ISTL::BCRSMatrixBackend<>;
+  using MBE = ISTL::BCRSMatrixBackend<>;
   // konstrukcija vektorskog grid  operatora
-  using GO = Dune::PDELab::GridOperator<GFS, GFS, LOP, MBE, double, double, double, CC, CC>;
+  using GO = GridOperator<GFS, GFS, LOP, MBE, double, double, double, CC, CC>;
+
   // Interpoliramo rubni uvjet
-  using BCE0 = BCExtension<GV, double>;
+  using BCE0 = BCExtension<GV>;
   // Konstruiraj vektorsku funkciju rubnog uvjeta
-  using BCE = Dune::PDELab::PowerGridFunction<BCE0, dim>;
+  using BCE = PowerGridFunction<BCE0, dim>;
   // Linear solver -- sustav je (skoro) simetričan, možemo koristiti CG_ILU0
-  using LS = Dune::PDELab::ISTLBackend_SEQ_CG_ILU0;
+
+  using LS = ISTLBackend_SEQ_CG_ILU0;
    // vektor komponenti
   using U = typename GO::Traits::Domain;
   // linearni solver
-  using SLP = Dune::PDELab::StationaryLinearProblemSolver<GO, LS, U>;
-  // Uzmimo tipove za potprostore: 0 -> potprostor prve komponente, 1 -> druge itd.
-  using U0SUB = Dune::PDELab::GridFunctionSubSpace<GFS, Dune::TypeTree::TreePath<0> >;
-  using U1SUB = Dune::PDELab::GridFunctionSubSpace<GFS, Dune::TypeTree::TreePath<1> >;
-  // Napravi mrežnu funciju od svake komponenete rješenja
-  using U0_DGF =  Dune::PDELab::DiscreteGridFunction<U0SUB, U> ;
-  using U1_DGF =  Dune::PDELab::DiscreteGridFunction<U1SUB, U> ;
+  using SLP = StationaryLinearProblemSolver<GO, LS, U>;
 
   FEM0 fem0(gv);
   GFS0 gfs0(gv,fem0);
   GFS  gfs(gfs0);
+  gfs.template child<0>().name("u0");  // Imena nam trebaju za VTK ispis.
+  using namespace Dune::Indices;
+  //gfs.child(_0).name("u0");
+  gfs.child(_1).name("u1");
+  gfs.child(_2).name("u2");
+
   // rubni uvjet za komponentu
   BCTypeParam<GV> bc0(gv);
   U_BCTypeParam bc(bc0);
   // odredi Dirichletovu granicu
   CC cc;
   Dune::PDELab::constraints(bc, gfs, cc);
+
   // Parametri za lokalni operator
   double mu = E/( 2*(1+nu) );
   double lambda = E*nu/( (1+nu)*(1-2*nu) );
@@ -87,7 +94,7 @@ void driver(GV & gv, double E, double nu, double g_vert, double rho, std::string
   BCE bce(bce0);   // rubni uvjet
   Dune::PDELab::interpolate(bce, gfs, u);
 
-  // ILI ako razne komponente rješenja imaju različite Dirichletove vrijednosti 
+  // ILI ako razne komponente rješenja imaju različite Dirichletove vrijednosti
   // using BCE0 = BCExtension0<GV, double>;
   // using BCE1 = BCExtension0<GV, double>;
   // BCE0 bce0(gv);
@@ -106,16 +113,9 @@ void driver(GV & gv, double E, double nu, double g_vert, double rho, std::string
   else
       std::cout << "Solver did not converge.\n";
 
-  Dune::SubsamplingVTKWriter<GV> vtkwriter(gv, Dune::RefinementIntervals{1});
-  U0SUB u0sub(gfs); // prostor za prvu komponentu
-  U1SUB u1sub(gfs); // prostor za drugu komponentu
-  U0_DGF u0_dgf(u0sub, u);
-  U1_DGF u1_dgf(u1sub, u);
+  Dune::SubsamplingVTKWriter<GV> vtkwriter(gv, Dune::RefinementIntervals{k});
+  Dune::PDELab::addSolutionToVTKWriter(vtkwriter, gfs, u);  // jednostavniji nain ispisa
 
-  // Ispiši mrežne funkcije
-  vtkwriter.addVertexData( std::make_unique<Dune::PDELab::VTKGridFunctionAdapter<U0_DGF>>(u0_dgf, "u_x"));
-  vtkwriter.addVertexData( std::make_unique<Dune::PDELab::VTKGridFunctionAdapter<U1_DGF>>(u1_dgf, "u_y"));
   vtkwriter.write(name, Dune::VTK::ascii);
 
 }
-#endif   

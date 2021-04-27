@@ -1,5 +1,4 @@
-#ifndef BCTYPE_HH
-#define BCTYPE_HH
+#pragma once
 
 #include<dune/common/fvector.hh>
 #include<dune/pdelab/common/function.hh>
@@ -14,17 +13,15 @@
        
        Ovo je rubni uvjet ua skalarnu komponentu.
     */
-template<typename GV, typename RF>
+template<typename GV>
 class BCExtension
   : public Dune::PDELab::GridFunctionBase<Dune::PDELab::
-           GridFunctionTraits<GV,double,1,Dune::FieldVector<double,1> >, BCExtension<GV,RF> > {
+           GridFunctionTraits<GV,double,1,Dune::FieldVector<double,1> >, BCExtension<GV> > {
   const GV& gv;
 public:
   using Traits = Dune::PDELab::GridFunctionTraits<GV,double,1,Dune::FieldVector<double,1>>;
   BCExtension (const GV& gv_) : gv(gv_) {}
 
-  // Izračunaj Dirichletovu vrijednost na elementu. Ako točka nije na 
-  // Dirichletovoj granici, onda funkcija daje proširenje Dirichletovog rubnog
   // uvjeta na čitavu domenu. To je proširenje u osnovi proizvoljno. 
   // e     = element 
   // xlocal = lokalne koordinate točke u kojoj se računa Dirichletova vrijednost
@@ -33,7 +30,6 @@ public:
                         const typename Traits::DomainType& xlocal,
                         typename Traits::RangeType& y) const
   {
-    // Pretvori lokalne koordinate u globalne
     //auto x = e.geometry().global(xlocal);
     y = 0.0;
     return;
@@ -43,7 +39,7 @@ public:
 };
 
 
-// Ovo je klasa za skalarnu komponentu
+// Rubni uvjet. Ovo je klasa za skalarnu komponentu
 // što znači da pretpostavljamo isti tip uvjeta za sve komponente.
 template <typename GV>
 class BCTypeParam : public Dune::PDELab::DirichletConstraintsParameters
@@ -64,11 +60,10 @@ public:
   {
     auto xg = intersection.geometry().global( coord );
     if( xg[0]  < 1E-6 )
-        return true; //  lijeva strana je učvršćena
+        return true; //  lijeva strana, x=0, je učvršćena!
 
     return false;  
   }
 
   inline const GV& getGridView(){ return gv; }
 };
-#endif
